@@ -91,9 +91,9 @@ impl syn::parse::Parse for HotModuleAttribute {
         let lib_dir = match lib_dir {
             None => {
                 if cfg!(debug_assertions) {
-                    syn::parse_quote! { concat!(env!("CARGO_MANIFEST_DIR"), "/target/debug") }
+                    syn::parse_quote! { "target/debug" }
                 } else {
-                    syn::parse_quote! { concat!(env!("CARGO_MANIFEST_DIR"), "/target/release") }
+                    syn::parse_quote! { "target/release" }
                 }
             }
             Some(lib_dir) => lib_dir,
@@ -111,7 +111,9 @@ impl syn::parse::Parse for HotModuleAttribute {
 
         let loaded_lib_name_template = match loaded_lib_name_template {
             None => syn::parse_quote! { Option::None },
-            Some(loaded_lib_name_template) => syn::parse_quote! { Some(#loaded_lib_name_template.to_string()) },
+            Some(loaded_lib_name_template) => {
+                syn::parse_quote! { Some(#loaded_lib_name_template.to_string()) }
+            }
         };
 
         Ok(HotModuleAttribute {
