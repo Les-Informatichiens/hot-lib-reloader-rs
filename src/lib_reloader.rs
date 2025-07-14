@@ -77,7 +77,7 @@ impl LibReloader {
             // We don't load the actual lib because this can get problems e.g. on Windows
             // where a file lock would be held, preventing the lib from changing later.
             log::debug!("copying {watched_lib_file:?} -> {loaded_lib_file:?}");
-            fs::copy(&watched_lib_file, &loaded_lib_file)?;
+            fs::rename(&watched_lib_file, &loaded_lib_file)?;
             let hash = hash_file(&loaded_lib_file);
             #[cfg(target_os = "macos")]
             codesigner.codesign(&loaded_lib_file);
@@ -194,11 +194,17 @@ impl LibReloader {
         debounce: Duration,
     ) -> Result<(), HotReloaderError> {
         let lib_file = lib_file.as_ref().to_path_buf();
-        log::info!("start watching changes of file {}", lib_file.display());
+        let lib_file_name = lib_file.file_name().unwrap().to_os_string();
+        let parent_dir = lib_file
+            .parent()
+            .ok_or_else(|| HotReloaderError::NoParentDir(lib_file.clone()))?
+            .to_path_buf();
 
-        // File watcher thread. We watch `self.lib_file`, when it changes and we haven't
-        // a pending change still waiting to be loaded, set `self.changed` to true. This
-        // then gets picked up by `self.update`.
+        log::info!(
+            "start watching parent directory of file {}",
+            lib_file.display()
+        );
+
         thread::spawn(move || {
             let (tx, rx) = mpsc::channel();
 
@@ -207,31 +213,20 @@ impl LibReloader {
 
             debouncer
                 .watcher()
-                .watch(&lib_file, RecursiveMode::NonRecursive)
-                .expect("watch lib file");
-
-            // debouncer
-            //     .cache()
-            //     .add_root(dir.path(), RecursiveMode::Recursive);
-
-            // let mut watcher = RecommendedWatcher::new(tx, Config::default()).unwrap();
-            // watcher
-            //     .watch(&lib_file, RecursiveMode::NonRecursive)
-            //     .expect("watch lib file");
+                .watch(&parent_dir, RecursiveMode::NonRecursive)
+                .expect("watch parent directory");
 
             let signal_change = || {
                 if hash_file(&lib_file) == lib_file_hash.load(Ordering::Acquire)
                     || changed.load(Ordering::Acquire)
                 {
-                    // file not changed
                     return false;
                 }
 
-                log::debug!("{lib_file:?} changed",);
+                log::debug!("{lib_file:?} changed");
 
                 changed.store(true, Ordering::Release);
 
-                // inform subscribers
                 let subscribers = file_change_subscribers.lock().unwrap();
                 log::trace!(
                     "sending ChangedEvent::LibFileChanged to {} subscribers",
@@ -253,44 +248,50 @@ impl LibReloader {
                     Ok(events) => {
                         let events = match events {
                             Err(errors) => {
-                                log::error!("{} file watcher error!", errors.len());
                                 for err in errors {
-                                    log::error!("  {err}");
+                                    log::error!("watcher error: {err}");
                                 }
                                 continue;
                             }
                             Ok(events) => events,
                         };
 
-                        log::trace!("file change events: {events:?}");
-                        let was_removed =
-                            events
+                        let mut lib_file_changed = false;
+                        let mut lib_file_removed = false;
+
+                        for event in &events {
+                            let path_matches = event
+                                .paths
                                 .iter()
-                                .fold(false, |was_removed, event| match event.kind {
-                                    notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
-                                        false
-                                    }
-                                    notify::EventKind::Remove(_) => true,
-                                    _ => was_removed,
-                                });
-                        // just one hard link removed?
-                        if was_removed || !lib_file.exists() {
+                                .any(|p| p.file_name() == Some(&lib_file_name));
+
+                            if !path_matches {
+                                continue;
+                            }
+
+                            match event.kind {
+                                notify::EventKind::Modify(_) | notify::EventKind::Create(_) => {
+                                    lib_file_changed = true;
+                                }
+                                notify::EventKind::Remove(_) => {
+                                    lib_file_removed = true;
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        if lib_file_removed || !lib_file.exists() {
                             log::debug!(
-                                "{} was removed, trying to watch it again...",
+                                "{} was removed, waiting for it to be recreated...",
                                 lib_file.display()
                             );
-                        }
-                        loop {
-                            if debouncer
-                                .watcher()
-                                .watch(&lib_file, RecursiveMode::NonRecursive)
-                                .is_ok()
-                            {
-                                log::info!("watching {lib_file:?} again after removal");
-                                signal_change();
-                                break;
+                            while !lib_file.exists() {
+                                thread::sleep(Duration::from_millis(500));
                             }
-                            thread::sleep(Duration::from_millis(500));
+                            log::info!("{} was recreated", lib_file.display());
+                            signal_change();
+                        } else if lib_file_changed {
+                            signal_change();
                         }
                     }
                 }

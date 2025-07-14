@@ -8,4 +8,6 @@ pub enum HotReloaderError {
     LibraryLoadError(#[from] libloading::Error),
     #[error("The hot reloadable library has not been loaded. Has it not been built yet?")]
     LibraryNotLoaded,
+    #[error("No parent directory found for library file: {0}")]
+    NoParentDir(std::path::PathBuf),
 }
