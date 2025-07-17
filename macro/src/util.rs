@@ -11,7 +11,9 @@ pub fn ident_from_pat(
         syn::Pat::Ident(pat) => Ok(pat.ident.clone()),
         _ => Err(syn::Error::new(
             span,
-            format!("generating call for library function: signature of function {func_name} cannot be converted"),
+            format!(
+                "generating call for library function: signature of function {func_name} cannot be converted"
+            ),
         )),
     }
 }
@@ -29,7 +31,12 @@ pub fn read_functions_from_file(
     let path: PathBuf = file_name.value().into();
 
     if !path.exists() {
-        return Err(Error::new(span, format!("Could not find Rust source file {path:?}. Please make sure that you specify the file path from the project root directory. Please not that this has been changed in hot-lib-reloader v0.5 -> v0.6. See https://github.com/rksm/hot-lib-reloader-rs/issues/13.")));
+        return Err(Error::new(
+            span,
+            format!(
+                "Could not find Rust source file {path:?}. Please make sure that you specify the file path from the project root directory. Please not that this has been changed in hot-lib-reloader v0.5 -> v0.6. See https://github.com/rksm/hot-lib-reloader-rs/issues/13."
+            ),
+        ));
     }
 
     let content = std::fs::read_to_string(&path)
@@ -102,7 +109,8 @@ pub fn read_functions_from_file(
                                     _ => return false,
                                 };
                                 cfg_no_mangle(nested.iter())
-                            } else {
+                            }
+                            else {
                                 false
                             }
                         })

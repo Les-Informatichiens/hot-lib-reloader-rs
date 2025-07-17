@@ -1,5 +1,5 @@
 use proc_macro2::Span;
-use syn::{token, Expr, FnArg, ItemFn, LitByteStr, LitStr, Path, Result, Visibility};
+use syn::{Expr, FnArg, ItemFn, LitByteStr, LitStr, Path, Result, Visibility, token};
 use syn::{ForeignItemFn, LitInt};
 
 use crate::util::ident_from_pat;
@@ -119,12 +119,17 @@ pub(crate) fn generate_lib_loader_items(
 pub(crate) fn gen_hot_module_function_for(
     lib_function: ForeignItemFn,
     span: Span,
+    fn_name: Option<&syn::Ident>,
 ) -> Result<ItemFn> {
     let ForeignItemFn { sig, .. } = lib_function;
 
+    let fun_ident = match fn_name {
+        Some(name) => name,
+        None => &sig.ident,
+    };
+
     // the symbol inside the library we call needs to be a byte string
     // ending with a nul byte.
-    let fun_ident = &sig.ident;
 
     let symbol_name = {
         let mut symbol_name = fun_ident.to_string().into_bytes();

@@ -2,7 +2,7 @@
 name = "hot-lib-reloader"
 version = "0.7.0"
 categories = ["development-tools"]
-edition = "2021"
+edition = "2024"
 exclude = [".dir-locals.el", "DEV.org", "doc/*"]
 homepage = "https://github.com/rksm/hot-lib-reloader-rs"
 keywords = ["hot-reloading", "hot-reload", "autoreload", "live-programming"]
