@@ -1,18 +1,16 @@
-use std::path::PathBuf;
-
 use quote::ToTokens;
+use syn::LitBool;
 use syn::{
     Attribute, ForeignItemFn, Ident, Item, ItemMacro, LitStr, Macro, Result, Visibility,
     spanned::Spanned, token,
 };
-use syn::{Error, LitBool};
 
 use super::HotModuleAttribute;
 use super::code_gen::{
     gen_hot_module_function_for, gen_lib_change_subscription_function, generate_lib_loader_items,
 };
 use crate::hot_module::code_gen::{gen_lib_version_function, gen_lib_was_updated_function};
-use crate::util::read_functions_from_file;
+use crate::util::{read_file_and_replace_hot_functions, read_functions_from_file};
 
 pub(crate) struct HotModule {
     pub(crate) vis: Visibility,
@@ -115,118 +113,8 @@ impl syn::parse::Parse for HotModule {
                         })
                         .and_then(|t| syn::parse2::<LitStr>(t.into_token_stream()))?;
 
-                    // let base_path = proc_macro::Span::call_site()
-                    //     .local_file()
-                    //     .ok_or(Error::new(
-                    //         span,
-                    //         format!("Could not find local file. Sorry bruv."),
-                    //     ))?
-                    //     .parent()
-                    //     .ok_or(Error::new(span, format!("File should have a parent.")))?;
-
-                    let path: PathBuf = file_name.value().into();
-                    let content = std::fs::read_to_string(&path).map_err(|err| {
-                        Error::new(span, format!("Error reading file {path:?}: {err}"))
-                    })?;
-
-                    let mut ast: syn::File = syn::parse_file(&content)?;
-
-                    for item in ast.items.drain(..) {
-                        match item {
-                            syn::Item::Fn(fun) => {
-                                fn cfg_no_mangle<'a>(
-                                    mut cfg_items: impl Iterator<Item = &'a syn::Meta>,
-                                ) -> bool {
-                                    let _predicate = cfg_items.next();
-                                    // TODO: return false if predicate is false
-                                    // false positives are unlikely, but can still compile error
-                                    cfg_items.any(|meta| match meta {
-                                        syn::Meta::Path(path) => path.is_ident("no_mangle"),
-                                        syn::Meta::List(list) => {
-                                            let mut found_no_mangle = false;
-                                            if let Err(_) = list.parse_nested_meta(|meta| {
-                                                if meta.path.is_ident("no_mangle") {
-                                                    found_no_mangle = true;
-                                                }
-                                                Ok(())
-                                            }) {
-                                                return false;
-                                            }
-                                            found_no_mangle
-                                        }
-
-                                        _ => false,
-                                    })
-                                }
-
-                                fn is_no_mangle<'a>(
-                                    mut attrs: impl Iterator<Item = &'a syn::Attribute>,
-                                ) -> bool {
-                                    attrs.any(|attr| {
-                                        let ident = match attr.path().get_ident() {
-                                            Some(i) => i,
-                                            None => return false,
-                                        };
-                                        if *ident == "no_mangle" {
-                                            true
-                                        } else if *ident == "unsafe" {
-                                            let mut found_no_mangle = false;
-                                            if let Err(_) = attr.parse_nested_meta(|meta| {
-                                                if meta.path.is_ident("no_mangle") {
-                                                    found_no_mangle = true;
-                                                }
-                                                Ok(())
-                                            }) {
-                                                return false;
-                                            }
-                                            found_no_mangle
-                                        } else if *ident == "cfg_attr" {
-                                            let nested = match attr.parse_args_with(
-                                                syn::punctuated::Punctuated::<
-                                                    syn::Meta,
-                                                    syn::Token![,],
-                                                >::parse_terminated,
-                                            ) {
-                                                Ok(nested) => nested,
-                                                _ => return false,
-                                            };
-                                            cfg_no_mangle(nested.iter())
-                                        } else if *ident == "hot_function" {
-                                            true
-                                        } else {
-                                            false
-                                        }
-                                    })
-                                }
-
-                                if !is_no_mangle(fun.attrs.iter()) {
-                                    items.push(Item::Fn(fun));
-                                    continue;
-                                };
-
-                                let hot_fun = ForeignItemFn {
-                                    attrs: Vec::new(),
-                                    vis: fun.vis.clone(),
-                                    sig: fun.sig.clone(),
-                                    semi_token: syn::token::Semi(span),
-                                };
-
-                                let new_fn_name = format!("__{}__", fun.sig.ident.clone());
-
-                                let mut fun = fun.clone();
-                                fun.sig.ident = Ident::new(&new_fn_name, fun.sig.ident.span());
-
-                                items.push(Item::Fn(gen_hot_module_function_for(
-                                    hot_fun,
-                                    file_name.span(),
-                                    Some(&fun.sig.ident),
-                                )?));
-
-                                items.push(Item::Fn(fun));
-                            }
-                            _ => items.push(item),
-                        }
-                    }
+                    let mut new_items = read_file_and_replace_hot_functions(file_name)?;
+                    items.extend(new_items.drain(..));
                 }
 
                 // parses and code gens

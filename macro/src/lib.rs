@@ -1,4 +1,4 @@
-mod hot_module;
+pub(crate) mod hot_module;
 mod lib_reloader;
 mod util;
 
